@@ -4,18 +4,17 @@ module DeviseTokenAuth
     before_filter :set_user_by_token, :only => [:validate_token]
 
     def validate_token
-      # @user will have been set by set_user_token concern
-      if @user
+      # @resource will have been set by set_user_token concern
+      if @resource
+        yield if block_given?
         render json: {
           success: true,
-          data: @user.as_json(except: [
-            :tokens, :created_at, :updated_at
-          ])
+          data: @resource.token_validation_response
         }
       else
         render json: {
           success: false,
-          errors: ["Invalid login credentials"]
+          errors: [I18n.t("devise_token_auth.token_validations.invalid")]
         }, status: 401
       end
     end

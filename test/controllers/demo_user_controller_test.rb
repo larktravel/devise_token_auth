@@ -7,14 +7,15 @@ require 'test_helper'
 #  was the appropriate message delivered in the json payload?
 
 class DemoUserControllerTest < ActionDispatch::IntegrationTest
+  include Warden::Test::Helpers
   describe DemoUserController do
     describe "Token access" do
       before do
-        @user = users(:confirmed_email_user)
-        @user.skip_confirmation!
-        @user.save!
+        @resource = users(:confirmed_email_user)
+        @resource.skip_confirmation!
+        @resource.save!
 
-        @auth_headers = @user.create_new_auth_token
+        @auth_headers = @resource.create_new_auth_token
 
         @token     = @auth_headers['access-token']
         @client_id = @auth_headers['client']
@@ -24,7 +25,7 @@ class DemoUserControllerTest < ActionDispatch::IntegrationTest
       describe 'successful request' do
         before do
           # ensure that request is not treated as batch request
-          age_token(@user, @client_id)
+          age_token(@resource, @client_id)
 
           get '/demo/members_only', {}, @auth_headers
 
@@ -36,7 +37,7 @@ class DemoUserControllerTest < ActionDispatch::IntegrationTest
 
         describe 'devise mappings' do
           it 'should define current_user' do
-            assert_equal @user, @controller.current_user
+            assert_equal @resource, @controller.current_user
           end
 
           it 'should define user_signed_in?' do
@@ -44,7 +45,7 @@ class DemoUserControllerTest < ActionDispatch::IntegrationTest
           end
 
           it 'should not define current_mang' do
-            refute_equal @user, @controller.current_mang
+            refute_equal @resource, @controller.current_mang
           end
         end
 
@@ -61,7 +62,7 @@ class DemoUserControllerTest < ActionDispatch::IntegrationTest
         end
 
         it "should return the user's uid in the auth header" do
-          assert_equal @user.uid, @resp_uid
+          assert_equal @resource.uid, @resp_uid
         end
 
         it 'should not treat this request as a batch request' do
@@ -70,9 +71,9 @@ class DemoUserControllerTest < ActionDispatch::IntegrationTest
 
         describe 'subsequent requests' do
           before do
-            @user.reload
+            @resource.reload
             # ensure that request is not treated as batch request
-            age_token(@user, @client_id)
+            age_token(@resource, @client_id)
 
             get '/demo/members_only', {}, @auth_headers.merge({'access-token' => @resp_token})
           end
@@ -104,24 +105,24 @@ class DemoUserControllerTest < ActionDispatch::IntegrationTest
       describe 'disable change_headers_on_each_request' do
         before do
           DeviseTokenAuth.change_headers_on_each_request = false
-          @user.reload
-          age_token(@user, @client_id)
+          @resource.reload
+          age_token(@resource, @client_id)
 
           get '/demo/members_only', {}, @auth_headers
 
           @first_is_batch_request = assigns(:is_batch_request)
-          @first_user = assigns(:user).dup
+          @first_user = assigns(:resource).dup
           @first_access_token = response.headers['access-token']
           @first_response_status = response.status
 
-          @user.reload
-          age_token(@user, @client_id)
+          @resource.reload
+          age_token(@resource, @client_id)
 
           # use expired auth header
           get '/demo/members_only', {}, @auth_headers
 
           @second_is_batch_request = assigns(:is_batch_request)
-          @second_user = assigns(:user).dup
+          @second_user = assigns(:resource).dup
           @second_access_token = response.headers['access-token']
           @second_response_status = response.status
         end
@@ -163,19 +164,19 @@ class DemoUserControllerTest < ActionDispatch::IntegrationTest
       describe 'batch requests' do
         describe 'success' do
           before do
-            age_token(@user, @client_id)
+            age_token(@resource, @client_id)
             #request.headers.merge!(@auth_headers)
 
             get '/demo/members_only', {}, @auth_headers
 
             @first_is_batch_request = assigns(:is_batch_request)
-            @first_user = assigns(:user)
+            @first_user = assigns(:resource)
             @first_access_token = response.headers['access-token']
 
             get '/demo/members_only', {}, @auth_headers
 
             @second_is_batch_request = assigns(:is_batch_request)
-            @second_user = assigns(:user)
+            @second_user = assigns(:resource)
             @second_access_token = response.headers['access-token']
           end
 
@@ -202,24 +203,24 @@ class DemoUserControllerTest < ActionDispatch::IntegrationTest
 
         describe 'time out' do
           before do
-            @user.reload
-            age_token(@user, @client_id)
+            @resource.reload
+            age_token(@resource, @client_id)
 
             get '/demo/members_only', {}, @auth_headers
 
             @first_is_batch_request = assigns(:is_batch_request)
-            @first_user = assigns(:user).dup
+            @first_user = assigns(:resource).dup
             @first_access_token = response.headers['access-token']
             @first_response_status = response.status
 
-            @user.reload
-            age_token(@user, @client_id)
+            @resource.reload
+            age_token(@resource, @client_id)
 
             # use expired auth header
             get '/demo/members_only', {}, @auth_headers
 
             @second_is_batch_request = assigns(:is_batch_request)
-            @second_user = assigns(:user)
+            @second_user = assigns(:resource)
             @second_access_token = response.headers['access-token']
             @second_response_status = response.status
           end
@@ -258,5 +259,57 @@ class DemoUserControllerTest < ActionDispatch::IntegrationTest
         end
       end
     end
+
+    describe 'Existing Warden authentication' do
+      before do
+        @resource = users(:confirmed_email_user)
+        @resource.skip_confirmation!
+        @resource.save!
+        login_as( @resource, :scope => :user)
+
+        # no auth headers sent, testing that warden authenticates correctly.
+        get '/demo/members_only', {}, nil
+
+        @resp_token       = response.headers['access-token']
+        @resp_client_id   = response.headers['client']
+        @resp_expiry      = response.headers['expiry']
+        @resp_uid         = response.headers['uid']
+      end
+
+      describe 'devise mappings' do
+        it 'should define current_user' do
+          assert_equal @resource, @controller.current_user
+        end
+
+        it 'should define user_signed_in?' do
+          assert @controller.user_signed_in?
+        end
+
+        it 'should not define current_mang' do
+          refute_equal @resource, @controller.current_mang
+        end
+      end
+
+      it 'should return success status' do
+        assert_equal 200, response.status
+      end
+
+      it 'should receive new token after successful request' do
+        assert @resp_token
+      end
+
+      it 'should set the token expiry in the auth header' do
+        assert @resp_expiry
+      end
+
+      it 'should return the client id in the auth header' do
+        assert @resp_client_id
+      end
+
+      it "should return the user's uid in the auth header" do
+        assert @resp_uid
+      end
+    end
+
   end
 end

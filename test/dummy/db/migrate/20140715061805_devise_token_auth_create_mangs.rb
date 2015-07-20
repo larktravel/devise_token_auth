@@ -1,3 +1,5 @@
+include MigrationDatabaseHelper
+
 class DeviseTokenAuthCreateMangs < ActiveRecord::Migration
   def change
     create_table(:mangs) do |t|
@@ -42,15 +44,19 @@ class DeviseTokenAuthCreateMangs < ActiveRecord::Migration
       t.string :uid, :null => false, :default => ""
 
       ## Tokens
-      t.text :tokens
+      if json_supported_database?
+        t.json :tokens
+      else
+        t.text :tokens
+      end
 
       t.timestamps
     end
 
     add_index :mangs, :email
-    add_index :mangs, :uid,                  :unique => true
+    add_index :mangs, [:uid, :provider],     :unique => true
     add_index :mangs, :reset_password_token, :unique => true
-    # add_index :mangs, :confirmation_token,   :unique => true
+    add_index :mangs, :confirmation_token,   :unique => true
     # add_index :mangs, :unlock_token,         :unique => true
   end
 end

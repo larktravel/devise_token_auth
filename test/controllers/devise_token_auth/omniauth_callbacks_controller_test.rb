@@ -30,7 +30,7 @@ class OmniauthTest < ActionDispatch::IntegrationTest
           auth_origin_url: @redirect_url
         }
 
-        @user = assigns(:user)
+        @resource = assigns(:resource)
       end
 
       test 'status should be success' do
@@ -46,36 +46,111 @@ class OmniauthTest < ActionDispatch::IntegrationTest
       end
 
       test 'user should have been created' do
-        assert @user
+        assert @resource
       end
 
       test 'user should be assigned info from provider' do
-        assert_equal 'chongbong@aol.com', @user.email
+        assert_equal 'chongbong@aol.com', @resource.email
       end
 
       test 'user should be of the correct class' do
-        assert_equal User, @user.class
+        assert_equal User, @resource.class
       end
 
       test 'response contains all serializable attributes for user' do
         post_message = JSON.parse(/postMessage\((?<data>.*), '\*'\);/m.match(response.body)[:data])
 
-        assert post_message["id"]
-        assert post_message["email"]
-        assert post_message["uid"]
-        assert post_message["name"]
-        assert post_message["favorite_color"]
-        assert post_message["message"]
-        assert post_message["client_id"]
+
+        ['id', 'email', 'uid', 'name', 
+          'favorite_color', 'tokens', 'password'
+        ].each do |key|
+            assert_equal post_message[key], @resource.as_json[key], "Unexpected value for #{key.inspect}"
+        end
+        
+        assert_equal "deliverCredentials", post_message["message"]
         assert post_message["auth_token"]
-        refute post_message["tokens"]
-        refute post_message["password"]
+        assert post_message["client_id"]
+        assert post_message["expiry"]
+        assert post_message["config"]
       end
 
       test 'session vars have been cleared' do
         refute request.session['dta.omniauth.auth']
         refute request.session['dta.omniauth.params']
       end
+
+      describe 'trackable' do
+        test 'sign_in_count incrementns' do
+          assert @resource.sign_in_count > 0
+        end
+
+        test 'current_sign_in_at is updated' do
+          assert @resource.current_sign_in_at
+        end
+
+        test 'last_sign_in_at is updated' do
+          assert @resource.last_sign_in_at
+        end
+
+        test 'sign_in_ip is updated' do
+          assert @resource.current_sign_in_ip
+        end
+
+        test 'last_sign_in_ip is updated' do
+          assert @resource.last_sign_in_ip
+        end
+      end
+
+    end
+
+    describe "oauth_registration attr" do
+
+      def stub_resource
+        relation = {}
+        def relation.first_or_initialize
+          @resource ||= User.new
+          def @resource.save!; end # prevent validation error
+          @resource
+        end        
+        User.stub(:where, relation) do          
+          yield(relation.first_or_initialize)
+        end
+      end
+
+      test 'response contains oauth_registration attr with new user' do
+
+        stub_resource do |resource|
+          def resource.new_record?
+            true
+          end
+          get_via_redirect '/auth/facebook', {
+            auth_origin_url: @redirect_url
+          }
+           
+          post_message = JSON.parse(/postMessage\((?<data>.*), '\*'\);/m.match(response.body)[:data])
+          assert post_message['oauth_registration']
+          assert_match 'oauth_registration', @controller.instance_variable_get(:@auth_origin_url)
+        end
+      end
+
+      test 'response does not contain oauth_registration attr with existing user' do
+
+        stub_resource do |resource|
+          def resource.new_record?
+            false
+          end
+          get_via_redirect '/auth/facebook', {
+            auth_origin_url: @redirect_url
+          }
+          
+          post_message = JSON.parse(/postMessage\((?<data>.*), '\*'\);/m.match(response.body)[:data])
+          refute post_message['oauth_registration']
+          assert_no_match 'oauth_registration', @controller.instance_variable_get(:@auth_origin_url)
+        end
+      end
+
+
+
     end
 
     describe 'pass additional params' do
@@ -88,7 +163,7 @@ class OmniauthTest < ActionDispatch::IntegrationTest
           name: @unpermitted_param
         }
 
-        @user = assigns(:user)
+        @resource = assigns(:resource)
       end
 
       test 'status shows success' do
@@ -96,11 +171,34 @@ class OmniauthTest < ActionDispatch::IntegrationTest
       end
 
       test 'additional attribute was passed' do
-        assert_equal @fav_color, @user.favorite_color
+        assert_equal @fav_color, @resource.favorite_color
       end
 
       test 'non-whitelisted attributes are ignored' do
-        refute_equal @unpermitted_param, @user.name
+        refute_equal @unpermitted_param, @resource.name
+      end
+    end
+
+
+    describe 'using namespaces' do
+      before do
+        get_via_redirect '/api/v1/auth/facebook', {
+          auth_origin_url: @redirect_url
+        }
+
+        @resource = assigns(:resource)
+      end
+
+      test 'request is successful' do
+        assert_equal 200, response.status
+      end
+
+      test 'user should have been created' do
+        assert @resource
+      end
+
+      test 'user should be of the correct class' do
+        assert_equal User, @resource.class
       end
     end
   end
@@ -113,7 +211,7 @@ class OmniauthTest < ActionDispatch::IntegrationTest
           auth_origin_url: @redirect_url
         }
 
-        @user = assigns(:user)
+        @resource = assigns(:resource)
       end
 
       test 'status should be success' do
@@ -129,16 +227,26 @@ class OmniauthTest < ActionDispatch::IntegrationTest
       end
 
       test 'user should have been created' do
-        assert @user
+        assert @resource
       end
 
       test 'user should be assigned info from provider' do
-        assert_equal 'chongbong@aol.com', @user.email
+        assert_equal 'chongbong@aol.com', @resource.email
       end
 
       test 'user should be of the correct class' do
-        assert_equal Mang, @user.class
+        assert_equal Mang, @resource.class
       end
+    end
+  end
+
+  describe 'User with only :database_authenticatable and :registerable included' do
+    test 'OnlyEmailUser should not be able to use OAuth' do
+      assert_raises(ActionController::RoutingError) {
+        get_via_redirect '/only_email_auth/facebook', {
+          auth_origin_url: @redirect_url
+        }
+      }
     end
   end
 end

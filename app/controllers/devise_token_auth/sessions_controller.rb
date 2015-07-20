@@ -2,47 +2,70 @@
 module DeviseTokenAuth
   class SessionsController < DeviseTokenAuth::ApplicationController
     before_filter :set_user_by_token, :only => [:destroy]
+    after_action :reset_session, :only => [:destroy]
+
+    def new
+      render json: {
+        errors: [ I18n.t("devise_token_auth.sessions.not_supported")]
+      }, status: 405
+    end
 
     def create
-      @user = resource_class.find_by_email(resource_params[:email])
+      # Check
+      field = (resource_params.keys.map(&:to_sym) & resource_class.authentication_keys).first
 
-      if @user and valid_params? and @user.valid_password?(resource_params[:password]) and @user.confirmed?
+      @resource = nil
+      if field
+        q_value = resource_params[field]
+
+        if resource_class.case_insensitive_keys.include?(field)
+          q_value.downcase!
+        end
+
+        q = "#{field.to_s} = ? AND provider='email'"
+
+        if ActiveRecord::Base.connection.adapter_name.downcase.starts_with? 'mysql'
+          q = "BINARY " + q
+        end
+
+        @resource = resource_class.where(q, q_value).first
+      end
+
+      if @resource and valid_params?(field, q_value) and @resource.valid_password?(resource_params[:password]) and (!@resource.respond_to?(:active_for_authentication?) or @resource.active_for_authentication?)
         # create client id
         @client_id = SecureRandom.urlsafe_base64(nil, false)
         @token     = SecureRandom.urlsafe_base64(nil, false)
 
-        @user.tokens[@client_id] = {
+        @resource.tokens[@client_id] = {
           token: BCrypt::Password.create(@token),
           expiry: (Time.now + DeviseTokenAuth.token_lifespan).to_i
         }
-        @user.save
+        @resource.save
+
+        sign_in(:user, @resource, store: false, bypass: false)
+
+        yield if block_given?
 
         render json: {
-          data: @user.as_json(except: [
-            :tokens, :created_at, :updated_at
-          ])
+          data: @resource.token_validation_response
         }
 
-      elsif @user and not @user.confirmed?
+      elsif @resource and not (!@resource.respond_to?(:active_for_authentication?) or @resource.active_for_authentication?)
         render json: {
           success: false,
-          errors: [
-            "A confirmation email was sent to your account at #{@user.email}. "+
-            "You must follow the instructions in the email before your account "+
-            "can be activated"
-          ]
+          errors: [ I18n.t("devise_token_auth.sessions.not_confirmed", email: @resource.email) ]
         }, status: 401
 
       else
         render json: {
-          errors: ["Invalid login credentials. Please try again."]
+          errors: [I18n.t("devise_token_auth.sessions.bad_credentials")]
         }, status: 401
       end
     end
 
     def destroy
       # remove auth instance variables so that after_filter does not run
-      user = remove_instance_variable(:@user) if @user
+      user = remove_instance_variable(:@resource) if @resource
       client_id = remove_instance_variable(:@client_id) if @client_id
       remove_instance_variable(:@token) if @token
 
@@ -50,23 +73,49 @@ module DeviseTokenAuth
         user.tokens.delete(client_id)
         user.save!
 
+        yield if block_given?
+
         render json: {
           success:true
         }, status: 200
 
       else
         render json: {
-          errors: ["User was not found or was not logged in."]
+          errors: [I18n.t("devise_token_auth.sessions.user_not_found")]
         }, status: 404
       end
     end
 
-    def valid_params?
-      resource_params[:password] && resource_params[:email]
+    def valid_params?(key, val)
+      resource_params[:password] && key && val
     end
 
     def resource_params
       params.permit(devise_parameter_sanitizer.for(:sign_in))
+    end
+
+    def get_auth_params
+      auth_key = nil
+      auth_val = nil
+
+      # iterate thru allowed auth keys, use first found
+      resource_class.authentication_keys.each do |k|
+        if resource_params[k]
+          auth_val = resource_params[k]
+          auth_key = k
+          break
+        end
+      end
+
+      # honor devise configuration for case_insensitive_keys
+      if resource_class.case_insensitive_keys.include?(auth_key)
+        auth_val.downcase!
+      end
+
+      return {
+        key: auth_key,
+        val: auth_val
+      }
     end
   end
 end

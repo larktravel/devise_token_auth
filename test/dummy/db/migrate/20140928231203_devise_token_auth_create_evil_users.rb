@@ -1,3 +1,5 @@
+include MigrationDatabaseHelper
+
 class DeviseTokenAuthCreateEvilUsers < ActiveRecord::Migration
   def change
     create_table(:evil_users) do |t|
@@ -40,7 +42,11 @@ class DeviseTokenAuthCreateEvilUsers < ActiveRecord::Migration
       t.string :uid, :null => false, :default => ""
 
       ## Tokens
-      t.text :tokens
+      if json_supported_database?
+        t.json :tokens
+      else
+        t.text :tokens
+      end
 
       ## etc.
       t.string :favorite_color
@@ -49,9 +55,9 @@ class DeviseTokenAuthCreateEvilUsers < ActiveRecord::Migration
     end
 
     add_index :evil_users, :email
-    add_index :evil_users, :uid,                  :unique => true
+    add_index :evil_users, [:uid, :provider],     :unique => true
     add_index :evil_users, :reset_password_token, :unique => true
-    # add_index :evil_users, :confirmation_token,   :unique => true
+    add_index :evil_users, :confirmation_token,   :unique => true
     # add_index :evil_users, :unlock_token,         :unique => true
   end
 end
